@@ -174,6 +174,9 @@ where
 	}
 
 	log::warn!("MPEG: Using bitrate to estimate duration");
+	// Capture and immediately print the stack trace
+	let backtrace = std::backtrace::Backtrace::capture();
+	println!("--- mpeg backtrace ---\n{}", backtrace);
 
 	// http://gabriel.mp3-tech.org/mp3infotag.html:
 	//
