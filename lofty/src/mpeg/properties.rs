@@ -1,10 +1,9 @@
-use super::header::{ChannelMode, Emphasis, Header, Layer, MpegVersion, VbrHeader, VbrHeaderType};
+use super::header::{ChannelMode, Emphasis, Header, Layer, MpegVersion, VbrHeader};
 use crate::error::Result;
-use crate::mpeg::header::rev_search_for_frame_header;
 use crate::properties::{ChannelMask, FileProperties};
 use crate::util::math::RoundedDivision;
 
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{Read, Seek};
 use std::time::Duration;
 
 /// An MPEG file's audio properties
@@ -122,9 +121,9 @@ impl MpegProperties {
 
 pub(super) fn read_properties<R>(
 	properties: &mut MpegProperties,
-	reader: &mut R,
+	_reader: &mut R,
 	first_frame: (Header, u64),
-	mut last_frame_offset: u64,
+	_last_frame_offset: u64,
 	vbr_header: Option<VbrHeader>,
 	file_length: u64,
 ) -> Result<()>
@@ -132,7 +131,7 @@ where
 	R: Read + Seek,
 {
 	let first_frame_header = first_frame.0;
-	let first_frame_offset = first_frame.1;
+	let _first_frame_offset = first_frame.1;
 
 	properties.version = first_frame_header.version;
 	properties.layer = first_frame_header.layer;
@@ -173,68 +172,6 @@ where
 		return Ok(());
 	}
 
-	log::warn!("MPEG: Using bitrate to estimate duration");
-	// Capture and immediately print the stack trace
-	let backtrace = std::backtrace::Backtrace::capture();
-	println!("--- mpeg backtrace ---\n{}", backtrace);
-
-	// http://gabriel.mp3-tech.org/mp3infotag.html:
-	//
-	// "In the Info Tag, the "Xing" identification string (mostly at 0x24) of the header is replaced by "Info" in case of a CBR file."
-	let is_cbr = matches!(vbr_header.map(|h| h.ty), Some(VbrHeaderType::Info));
-	if is_cbr {
-		log::debug!("MPEG: CBR detected");
-		properties.audio_bitrate = first_frame_header.bitrate;
-	}
-
-	// Search for the last frame, starting at the end of the frames
-	reader.seek(SeekFrom::Start(last_frame_offset))?;
-
-	let mut last_frame = None;
-	let mut pos = last_frame_offset;
-	while pos > 0 {
-		match rev_search_for_frame_header(reader, &mut pos) {
-			// Found a frame header
-			Ok(Some(header)) => {
-				// Move `last_frame_offset` back to the actual position
-				last_frame_offset = pos;
-
-				if header.cmp(&first_frame_header) {
-					last_frame = Some(header);
-					break;
-				}
-			},
-			// Encountered some IO error, just break
-			Err(_) => break,
-			// No frame sync found, continue further back in the file
-			_ => {},
-		}
-	}
-
-	let Some(last_frame_header) = last_frame else {
-		log::warn!("MPEG: Could not find last frame, properties will be incomplete");
-		return Ok(());
-	};
-
-	let stream_end = last_frame_offset + u64::from(last_frame_header.len);
-	if stream_end < first_frame_offset {
-		// Something is incredibly wrong with this file, just give up
-		return Ok(());
-	}
-
-	let stream_len = stream_end - first_frame_offset;
-	if !is_cbr {
-		log::debug!("MPEG: VBR detected");
-
-		// TODO: Actually handle VBR streams, this still assumes CBR
-		properties.audio_bitrate = first_frame_header.bitrate;
-	}
-
-	let length = (stream_len * 8).div_round(u64::from(properties.audio_bitrate));
-	properties.duration = Duration::from_millis(length);
-	if let Some(overall_bitrate) = file_length.saturating_mul(8).checked_div(length) {
-		properties.overall_bitrate = overall_bitrate as u32;
-	}
-
-	Ok(())
+	log::debug!("MPEG: Skipping bitrate duration estimation (Audion patch — using Symphonia for duration)");
+	return Ok(());
 }
